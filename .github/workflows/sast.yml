@@ -1,0 +1,146 @@
+name: SAST Multi-Tool Benchmark
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  sast_scans:
+    name: Run 8 SAST Tools & Benchmark Evaluation
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Create Results Directory
+        run: mkdir -p sast-results
+
+      # ----------------------------------------------------
+      # 1. Bandit Scan
+      # ----------------------------------------------------
+      - name: Run Bandit
+        continue-on-error: true
+        run: |
+          pip install bandit
+          bandit -r app/ -f json -o sast-results/bandit.json || true
+          echo "Bandit scan finished."
+
+      # ----------------------------------------------------
+      # 2. Semgrep Scan
+      # ----------------------------------------------------
+      - name: Run Semgrep
+        continue-on-error: true
+        run: |
+          pip install semgrep
+          semgrep scan --config auto --json -o sast-results/semgrep.json app/ || true
+          echo "Semgrep scan finished."
+
+      # ----------------------------------------------------
+      # 3. Dlint (Flake8 Plugin)
+      # ----------------------------------------------------
+      - name: Run Dlint
+        continue-on-error: true
+        run: |
+          pip install flake8 dlint
+          flake8 --select=DU app/ > sast-results/dlint.txt || true
+          echo "Dlint scan finished."
+
+      # ----------------------------------------------------
+      # 4. DevSkim Scan
+      # ----------------------------------------------------
+      - name: Run DevSkim
+        uses: microsoft/DevSkim-Action@v1
+        continue-on-error: true
+        with:
+          directory-to-analyze: 'app'
+          output-filename: 'sast-results/devskim.sarif'
+
+      # ----------------------------------------------------
+      # 5. Bearer CLI Scan
+      # ----------------------------------------------------
+      - name: Run Bearer
+        continue-on-error: true
+        run: |
+          curl -sfL https://raw.githubusercontent.com/Bearer/bearer/main/contrib/install.sh | sh
+          ./bin/bearer scan app/ --format json --output sast-results/bearer.json || true
+          echo "Bearer scan finished."
+
+      # ----------------------------------------------------
+      # 6. Snyk Code Scan
+      # ----------------------------------------------------
+      - name: Run Snyk
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: |
+          if [ -n "$SNYK_TOKEN" ]; then
+            npm install -g snyk
+            snyk code test app/ --sarif-file-output=sast-results/snyk.sarif || true
+          else
+            echo "SNYK_TOKEN not set, skipping Snyk scan."
+          fi
+
+      # ----------------------------------------------------
+      # 7. CodeQL Scan
+      # ----------------------------------------------------
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        continue-on-error: true
+        with:
+          languages: python
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        continue-on-error: true
+        with:
+          output: sast-results/codeql-sarif-dir
+
+      - name: Prepare CodeQL SARIF
+        continue-on-error: true
+        run: |
+          if [ -f "sast-results/codeql-sarif-dir/python.sarif" ]; then
+            cp sast-results/codeql-sarif-dir/python.sarif sast-results/codeql.sarif
+          fi
+
+      # ----------------------------------------------------
+      # 8. Pysa (Pyre-check)
+      # ----------------------------------------------------
+      - name: Run Pysa
+        continue-on-error: true
+        run: |
+          pip install pyre-check
+          pyre-upgrade || true
+          pyre analyze --save-results-to sast-results/pysa.json || true
+          echo "Pysa scan finished."
+
+      # ----------------------------------------------------
+      # EVALUATION: Compute TP, FP, FN, Precision, Recall, F1 for 255 Combinations
+      # ----------------------------------------------------
+      - name: Run Evaluation Script
+        run: |
+          python scripts/evaluate.py
+
+      # ----------------------------------------------------
+      # Upload Results & Artifacts
+      # ----------------------------------------------------
+      - name: Upload SAST Reports & CSV Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-evaluation-results
+          path: |
+            sast_evaluation_summary.csv
+            sast-results/
+

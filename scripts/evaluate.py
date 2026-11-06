@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+"""
+Evaluation Script for SAST Benchmark Experiment
+Thesis: Analisis Komparatif Efektivitas Alat SAST Tunggal dan Kombinasi Multi-Tools
+        terhadap Akurasi Penilaian Keamanan Perangkat Lunak Python
+
+Calculates TP, FP, FN, Precision, Recall, and F1-Score for:
+- 8 Single Tools (C(8, 1) = 8 scenarios)
+- Multi-Tool Combinations (C(8, 2) to C(8, 8) = 247 scenarios)
+Total Scenarios: 255 combinations (Power Set without empty set)
+"""
+
+import json
+import os
+import re
+import sys
+from itertools import combinations
+from typing import Dict, List, Set, Tuple
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+GROUND_TRUTH_FILE = os.path.join(PROJECT_ROOT, "ground_truth.json")
+RESULTS_DIR = os.path.join(PROJECT_ROOT, "sast-results")
+OUTPUT_CSV = os.path.join(PROJECT_ROOT, "sast_evaluation_summary.csv")
+
+ALL_TOOLS = [
+    "bandit",
+    "semgrep",
+    "devskim",
+    "dlint",
+    "bearer",
+    "codeql",
+    "pysa",
+    "snyk"
+]
+
+
+def load_ground_truth(filepath: str) -> List[Dict]:
+    """Load ground truth vulnerabilities list."""
+    if not os.path.exists(filepath):
+        print(f"[!] Error: Ground truth file '{filepath}' not found!")
+        sys.exit(1)
+    with open(filepath, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def normalize_path(path: str) -> str:
+    """Normalize file path to use forward slashes and relative to project root."""
+    path = path.replace("\\", "/")
+    # Remove leading ./ or workspace prefixes if any
+    path = re.sub(r"^.*?app/", "app/", path)
+    return path
+
+
+class SASTParser:
+    """Parsers for each of the 8 SAST tools outputs."""
+
+    @staticmethod
+    def parse_bandit(filepath: str) -> List[Dict]:
+        """Parse Bandit JSON report."""
+        findings = []
+        if not os.path.exists(filepath):
+            return findings
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            for item in data.get("results", []):
+                findings.append({
+                    "tool": "bandit",
+                    "file": normalize_path(item.get("filename", "")),
+                    "line": item.get("line_number", 0),
+                    "rule_id": item.get("test_id", ""),
+                    "message": item.get("issue_text", "")
+                })
+        return findings
+
+    @staticmethod
+    def parse_semgrep(filepath: str) -> List[Dict]:
+        """Parse Semgrep JSON report."""
+        findings = []
+        if not os.path.exists(filepath):
+            return findings
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            for item in data.get("results", []):
+                findings.append({
+                    "tool": "semgrep",
+                    "file": normalize_path(item.get("path", "")),
+                    "line": item.get("start", {}).get("line", 0),
+                    "rule_id": item.get("check_id", ""),
+                    "message": item.get("extra", {}).get("message", "")
+                })
+        return findings
+
+    @staticmethod
+    def parse_sarif(filepath: str, tool_name: str) -> List[Dict]:
+        """Generic SARIF parser for CodeQL, Snyk, DevSkim, etc."""
+        findings = []
+        if not os.path.exists(filepath):
+            return findings
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            for run in data.get("runs", []):
+                for res in run.get("results", []):
+                    rule_id = res.get("ruleId", "")
+                    message = res.get("message", {}).get("text", "")
+                    for loc in res.get("locations", []):
+                        ploc = loc.get("physicalLocation", {})
+                        uri = ploc.get("artifactLocation", {}).get("uri", "")
+                        line = ploc.get("region", {}).get("startLine", 0)
+                        findings.append({
+                            "tool": tool_name,
+                            "file": normalize_path(uri),
+                            "line": line,
+                            "rule_id": rule_id,
+                            "message": message
+                        })
+        return findings
+
+    @staticmethod
+    def parse_dlint(filepath: str) -> List[Dict]:
+        """Parse Flake8/Dlint text output (e.g. app/file.py:10:1: DU100 message)."""
+        findings = []
+        if not os.path.exists(filepath):
+            return findings
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                match = re.match(r"^(.*?):(\d+):(\d+):\s+(DU\d+)\s+(.*)$", line.strip())
+                if match:
+                    file, lineno, _, rule_id, msg = match.groups()
+                    findings.append({
+                        "tool": "dlint",
+                        "file": normalize_path(file),
+                        "line": int(lineno),
+                        "rule_id": rule_id,
+                        "message": msg
+                    })
+        return findings
+
+    @staticmethod
+    def parse_bearer(filepath: str) -> List[Dict]:
+        """Parse Bearer JSON report."""
+        findings = []
+        if not os.path.exists(filepath):
+            return findings
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # Bearer outputs findings under high, medium, low, or findings key
+            for finding in data.get("findings", []):
+                findings.append({
+                    "tool": "bearer",
+                    "file": normalize_path(finding.get("filename", "")),
+                    "line": finding.get("line_number", 0),
+                    "rule_id": finding.get("cwe_ids", [""])[0] if finding.get("cwe_ids") else finding.get("id", ""),
+                    "message": finding.get("title", "")
+                })
+        return findings
+
+    @staticmethod
+    def parse_pysa(filepath: str) -> List[Dict]:
+        """Parse Pysa JSON report."""
+        findings = []
+        if not os.path.exists(filepath):
+            return findings
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            items = data if isinstance(data, list) else data.get("errors", [])
+            for item in items:
+                findings.append({
+                    "tool": "pysa",
+                    "file": normalize_path(item.get("path", "")),
+                    "line": item.get("line", 0),
+                    "rule_id": str(item.get("code", "")),
+                    "message": item.get("description", "")
+                })
+        return findings
+
+
+def load_tool_findings(tool: str) -> List[Dict]:
+    """Dispatch to specific parser according to available report file."""
+    base = os.path.join(RESULTS_DIR, tool)
+    if tool == "bandit":
+        return SASTParser.parse_bandit(f"{base}.json")
+    elif tool == "semgrep":
+        return SASTParser.parse_semgrep(f"{base}.json")
+    elif tool == "dlint":
+        if os.path.exists(f"{base}.txt"):
+            return SASTParser.parse_dlint(f"{base}.txt")
+        return SASTParser.parse_bandit(f"{base}.json")
+    elif tool == "bearer":
+        if os.path.exists(f"{base}.sarif"):
+            return SASTParser.parse_sarif(f"{base}.sarif", "bearer")
+        return SASTParser.parse_bearer(f"{base}.json")
+    elif tool == "codeql":
+        return SASTParser.parse_sarif(f"{base}.sarif", "codeql")
+    elif tool == "snyk":
+        if os.path.exists(f"{base}.sarif"):
+            return SASTParser.parse_sarif(f"{base}.sarif", "snyk")
+        return SASTParser.parse_sarif(f"{base}.json", "snyk")
+    elif tool == "devskim":
+        if os.path.exists(f"{base}.sarif"):
+            return SASTParser.parse_sarif(f"{base}.sarif", "devskim")
+        return SASTParser.parse_sarif(f"{base}.json", "devskim")
+    elif tool == "pysa":
+        return SASTParser.parse_pysa(f"{base}.json")
+    return []
+
+
+def is_matching(finding: Dict, gt: Dict, line_tolerance: int = 5) -> bool:
+    """
+    Check if a SAST finding matches a Ground Truth entry.
+    Matches if target files are equal and finding line is within GT range (+/- tolerance).
+    """
+    f_file = normalize_path(finding["file"])
+    gt_file = normalize_path(gt["file"])
+
+    if f_file != gt_file:
+        return False
+
+    f_line = finding["line"]
+    if f_line == 0:
+        # Some tools report whole file without specific line
+        return True
+
+    min_line = max(1, gt["start_line"] - line_tolerance)
+    max_line = gt["end_line"] + line_tolerance
+
+    return min_line <= f_line <= max_line
+
+
+def evaluate_findings(findings: List[Dict], ground_truth: List[Dict]) -> Tuple[int, int, int, float, float, float]:
+    """
+    Compute TP, FP, FN, Precision, Recall, and F1-Score for a set of findings.
+    """
+    detected_gt_ids: Set[str] = set()
+    tp_findings_indices: Set[int] = set()
+
+    for i, finding in enumerate(findings):
+        matched = False
+        for gt in ground_truth:
+            if is_matching(finding, gt):
+                detected_gt_ids.add(gt["id"])
+                tp_findings_indices.add(i)
+                matched = True
+        # If finding didn't match any GT entry, it's a False Positive
+
+    tp = len(detected_gt_ids)
+    fn = len(ground_truth) - tp
+    fp = len(findings) - len(tp_findings_indices)
+
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+
+    return tp, fp, fn, round(precision, 4), round(recall, 4), round(f1, 4)
+
+
+def main():
+    print("=" * 70)
+    print("SAST BENCHMARK EVALUATOR - 255 SCENARIOS COMBINATORIAL ANALYSIS")
+    print("Thesis Research Evaluation Pipeline")
+    print("=" * 70)
+
+    gt_data = load_ground_truth(GROUND_TRUTH_FILE)
+    print(f"[*] Loaded Ground Truth: {len(gt_data)} vulnerabilities")
+    for item in gt_data:
+        print(f"    - [{item['id']}] {item['name']} ({item['file']})")
+
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+
+    # 1. Collect findings for all 8 individual tools
+    tools_findings: Dict[str, List[Dict]] = {}
+    print("\n[*] Loading scan outputs from:", RESULTS_DIR)
+    for tool in ALL_TOOLS:
+        f_list = load_tool_findings(tool)
+        tools_findings[tool] = f_list
+        status = f"{len(f_list)} findings" if f_list else "Not found / 0 findings"
+        print(f"    - {tool.ljust(10)}: {status}")
+
+    # 2. Compute 255 Scenarios
+    records = []
+    scenario_counter = 1
+
+    print(f"\n[*] Generating and evaluating 255 Combinations (k=1..8)...")
+
+    for k in range(1, len(ALL_TOOLS) + 1):
+        for combo in combinations(ALL_TOOLS, k):
+            combo_name = "+".join(combo)
+            # Combine findings (Union strategy)
+            combined_findings = []
+            for t in combo:
+                combined_findings.extend(tools_findings[t])
+
+            tp, fp, fn, prec, rec, f1 = evaluate_findings(combined_findings, gt_data)
+            records.append({
+                "scenario_id": f"SCN-{scenario_counter:03d}",
+                "k_tools": k,
+                "tool_combination": combo_name,
+                "total_findings": len(combined_findings),
+                "TP": tp,
+                "FP": fp,
+                "FN": fn,
+                "Precision": prec,
+                "Recall": rec,
+                "F1_Score": f1
+            })
+            scenario_counter += 1
+
+    # 3. Export to CSV
+    import csv
+    with open(OUTPUT_CSV, "w", newline="", encoding="utf-8") as csvfile:
+        fieldnames = [
+            "scenario_id",
+            "k_tools",
+            "tool_combination",
+            "total_findings",
+            "TP",
+            "FP",
+            "FN",
+            "Precision",
+            "Recall",
+            "F1_Score"
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(records)
+
+    print(f"[+] Successfully evaluated {len(records)} scenarios!")
+    print(f"[+] Full results exported to: {OUTPUT_CSV}")
+
+    # 4. Display Single Tool Performance
+    print("\n" + "=" * 70)
+    print("RESULTS: SINGLE TOOLS EVALUATION (k=1)")
+    print("=" * 70)
+    print(f"{'Tool':<12} | {'TP':<4} | {'FP':<4} | {'FN':<4} | {'Precision':<10} | {'Recall':<8} | {'F1-Score':<8}")
+    print("-" * 70)
+    for r in records[:8]:
+        print(f"{r['tool_combination']:<12} | {r['TP']:<4} | {r['FP']:<4} | {r['FN']:<4} | {r['Precision']:<10.4f} | {r['Recall']:<8.4f} | {r['F1_Score']:<8.4f}")
+
+    # 5. Display Top 5 Highest F1-Score Combinations
+    records_sorted = sorted(records, key=lambda x: (x["F1_Score"], x["Recall"], -x["FP"]), reverse=True)
+    print("\n" + "=" * 70)
+    print("RESULTS: TOP 5 HIGHEST F1-SCORE COMBINATIONS")
+    print("=" * 70)
+    print(f"{'Rank':<5} | {'k':<3} | {'Combination':<35} | {'Prec':<6} | {'Rec':<6} | {'F1':<6}")
+    print("-" * 70)
+    for rank, r in enumerate(records_sorted[:5], 1):
+        print(f"#{rank:<4} | {r['k_tools']:<3} | {r['tool_combination'][:35]:<35} | {r['Precision']:<6.4f} | {r['Recall']:<6.4f} | {r['F1_Score']:<6.4f}")
+    print("=" * 70)
+
+
+if __name__ == "__main__":
+    main()

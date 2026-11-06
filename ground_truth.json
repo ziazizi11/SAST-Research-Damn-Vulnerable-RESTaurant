@@ -1,0 +1,69 @@
+[
+  {
+    "id": "GT-0",
+    "name": "Information Exposure via HTTP Header",
+    "file": "app/apis/healthcheck/service.py",
+    "start_line": 6,
+    "end_line": 9,
+    "function": "healthcheck",
+    "cwe": "CWE-200",
+    "owasp_api": "API8:2023 - Security Misconfiguration",
+    "description": "Endpoint /healthcheck returns sensitive server and library versions in X-Powered-By response header."
+  },
+  {
+    "id": "GT-1",
+    "name": "Missing Function Level Access Control (BOLA/BFLA)",
+    "file": "app/apis/menu/services/delete_menu_item_service.py",
+    "start_line": 12,
+    "end_line": 19,
+    "function": "delete_menu_item",
+    "cwe": "CWE-285",
+    "owasp_api": "API1:2023 - Broken Object Level Authorization",
+    "description": "Endpoint DELETE /menu/{item_id} lacks role-based authorization check, allowing any authenticated user to delete menu items."
+  },
+  {
+    "id": "GT-2",
+    "name": "Insecure Direct Object Reference (IDOR / BOLA)",
+    "file": "app/apis/auth/services/update_profile_service.py",
+    "start_line": 21,
+    "end_line": 37,
+    "function": "update_profile",
+    "cwe": "CWE-639",
+    "owasp_api": "API1:2023 - Broken Object Level Authorization",
+    "description": "Endpoint PUT /profile updates the profile of user specified in request body rather than binding updates strictly to current_user."
+  },
+  {
+    "id": "GT-3",
+    "name": "Broken Function Level Authorization (Privilege Escalation)",
+    "file": "app/apis/users/services/update_user_role_service.py",
+    "start_line": 12,
+    "end_line": 27,
+    "function": "update_user_role",
+    "cwe": "CWE-269",
+    "owasp_api": "API5:2023 - Broken Function Level Authorization",
+    "description": "Endpoint PUT /users/update_role allows regular customers to promote themselves to Employee role due to missing caller privilege check."
+  },
+  {
+    "id": "GT-4",
+    "name": "Server-Side Request Forgery (SSRF)",
+    "file": "app/apis/menu/utils.py",
+    "start_line": 9,
+    "end_line": 14,
+    "function": "_image_url_to_base64",
+    "cwe": "CWE-918",
+    "owasp_api": "API7:2023 - Server Side Request Forgery",
+    "description": "Function _image_url_to_base64 downloads arbitrary URLs using requests.get without validating host, protocol, or IP address."
+  },
+  {
+    "id": "GT-5",
+    "name": "OS Command Injection (RCE)",
+    "file": "app/apis/admin/utils.py",
+    "start_line": 4,
+    "end_line": 15,
+    "function": "get_disk_usage",
+    "cwe": "CWE-78",
+    "owasp_api": "API8:2023 - Security Misconfiguration",
+    "description": "Function get_disk_usage concatenates user-supplied parameters into shell string executed via subprocess.run(..., shell=True)."
+  }
+]
+
