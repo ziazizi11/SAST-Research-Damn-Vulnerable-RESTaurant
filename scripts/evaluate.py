@@ -55,122 +55,132 @@ class SASTParser:
     """Parsers for each of the 8 SAST tools outputs."""
 
     @staticmethod
+    def _safe_load_json(filepath: str):
+        if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+            return None
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"    [!] Warning: Could not parse JSON from {filepath}: {e}")
+            return None
+
+    @staticmethod
     def parse_bandit(filepath: str) -> List[Dict]:
         """Parse Bandit JSON report."""
         findings = []
-        if not os.path.exists(filepath):
+        data = SASTParser._safe_load_json(filepath)
+        if not data:
             return findings
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            for item in data.get("results", []):
-                findings.append({
-                    "tool": "bandit",
-                    "file": normalize_path(item.get("filename", "")),
-                    "line": item.get("line_number", 0),
-                    "rule_id": item.get("test_id", ""),
-                    "message": item.get("issue_text", "")
-                })
+        for item in data.get("results", []):
+            findings.append({
+                "tool": "bandit",
+                "file": normalize_path(item.get("filename", "")),
+                "line": int(item.get("line_number") or 0),
+                "rule_id": item.get("test_id", ""),
+                "message": item.get("issue_text", "")
+            })
         return findings
 
     @staticmethod
     def parse_semgrep(filepath: str) -> List[Dict]:
         """Parse Semgrep JSON report."""
         findings = []
-        if not os.path.exists(filepath):
+        data = SASTParser._safe_load_json(filepath)
+        if not data:
             return findings
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            for item in data.get("results", []):
-                findings.append({
-                    "tool": "semgrep",
-                    "file": normalize_path(item.get("path", "")),
-                    "line": item.get("start", {}).get("line", 0),
-                    "rule_id": item.get("check_id", ""),
-                    "message": item.get("extra", {}).get("message", "")
-                })
+        for item in data.get("results", []):
+            start = item.get("start") or {}
+            findings.append({
+                "tool": "semgrep",
+                "file": normalize_path(item.get("path", "")),
+                "line": int(start.get("line") or 0),
+                "rule_id": item.get("check_id", ""),
+                "message": item.get("extra", {}).get("message", "")
+            })
         return findings
 
     @staticmethod
     def parse_sarif(filepath: str, tool_name: str) -> List[Dict]:
         """Generic SARIF parser for CodeQL, Snyk, DevSkim, etc."""
         findings = []
-        if not os.path.exists(filepath):
+        data = SASTParser._safe_load_json(filepath)
+        if not data:
             return findings
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            for run in data.get("runs", []):
-                for res in run.get("results", []):
-                    rule_id = res.get("ruleId", "")
-                    message = res.get("message", {}).get("text", "")
-                    for loc in res.get("locations", []):
-                        ploc = loc.get("physicalLocation", {})
-                        uri = ploc.get("artifactLocation", {}).get("uri", "")
-                        line = ploc.get("region", {}).get("startLine", 0)
-                        findings.append({
-                            "tool": tool_name,
-                            "file": normalize_path(uri),
-                            "line": line,
-                            "rule_id": rule_id,
-                            "message": message
-                        })
+        for run in data.get("runs", []):
+            for res in run.get("results", []):
+                rule_id = res.get("ruleId", "")
+                message = res.get("message", {}).get("text", "")
+                for loc in res.get("locations", []):
+                    ploc = loc.get("physicalLocation") or {}
+                    uri = (ploc.get("artifactLocation") or {}).get("uri", "")
+                    region = ploc.get("region") or {}
+                    start_line = region.get("startLine") or 0
+                    findings.append({
+                        "tool": tool_name,
+                        "file": normalize_path(uri),
+                        "line": int(start_line),
+                        "rule_id": rule_id,
+                        "message": message
+                    })
         return findings
 
     @staticmethod
     def parse_dlint(filepath: str) -> List[Dict]:
         """Parse Flake8/Dlint text output (e.g. app/file.py:10:1: DU100 message)."""
         findings = []
-        if not os.path.exists(filepath):
+        if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
             return findings
-        with open(filepath, "r", encoding="utf-8") as f:
-            for line in f:
-                match = re.match(r"^(.*?):(\d+):(\d+):\s+(DU\d+)\s+(.*)$", line.strip())
-                if match:
-                    file, lineno, _, rule_id, msg = match.groups()
-                    findings.append({
-                        "tool": "dlint",
-                        "file": normalize_path(file),
-                        "line": int(lineno),
-                        "rule_id": rule_id,
-                        "message": msg
-                    })
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    match = re.match(r"^(.*?):(\d+):(\d+):\s+(DU\d+)\s+(.*)$", line.strip())
+                    if match:
+                        file, lineno, _, rule_id, msg = match.groups()
+                        findings.append({
+                            "tool": "dlint",
+                            "file": normalize_path(file),
+                            "line": int(lineno),
+                            "rule_id": rule_id,
+                            "message": msg
+                        })
+        except Exception as e:
+            print(f"    [!] Warning: Could not parse text from {filepath}: {e}")
         return findings
 
     @staticmethod
     def parse_bearer(filepath: str) -> List[Dict]:
         """Parse Bearer JSON report."""
         findings = []
-        if not os.path.exists(filepath):
+        data = SASTParser._safe_load_json(filepath)
+        if not data:
             return findings
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            # Bearer outputs findings under high, medium, low, or findings key
-            for finding in data.get("findings", []):
-                findings.append({
-                    "tool": "bearer",
-                    "file": normalize_path(finding.get("filename", "")),
-                    "line": finding.get("line_number", 0),
-                    "rule_id": finding.get("cwe_ids", [""])[0] if finding.get("cwe_ids") else finding.get("id", ""),
-                    "message": finding.get("title", "")
-                })
+        for finding in data.get("findings", []):
+            findings.append({
+                "tool": "bearer",
+                "file": normalize_path(finding.get("filename", "")),
+                "line": int(finding.get("line_number") or 0),
+                "rule_id": finding.get("cwe_ids", [""])[0] if finding.get("cwe_ids") else finding.get("id", ""),
+                "message": finding.get("title", "")
+            })
         return findings
 
     @staticmethod
     def parse_pysa(filepath: str) -> List[Dict]:
         """Parse Pysa JSON report."""
         findings = []
-        if not os.path.exists(filepath):
+        data = SASTParser._safe_load_json(filepath)
+        if not data:
             return findings
-        with open(filepath, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            items = data if isinstance(data, list) else data.get("errors", [])
-            for item in items:
-                findings.append({
-                    "tool": "pysa",
-                    "file": normalize_path(item.get("path", "")),
-                    "line": item.get("line", 0),
-                    "rule_id": str(item.get("code", "")),
-                    "message": item.get("description", "")
-                })
+        items = data if isinstance(data, list) else data.get("errors", [])
+        for item in items:
+            findings.append({
+                "tool": "pysa",
+                "file": normalize_path(item.get("path", "")),
+                "line": int(item.get("line") or 0),
+                "rule_id": str(item.get("code", "")),
+                "message": item.get("description", "")
+            })
         return findings
 
 
@@ -209,14 +219,18 @@ def is_matching(finding: Dict, gt: Dict, line_tolerance: int = 5) -> bool:
     Check if a SAST finding matches a Ground Truth entry.
     Matches if target files are equal and finding line is within GT range (+/- tolerance).
     """
-    f_file = normalize_path(finding["file"])
-    gt_file = normalize_path(gt["file"])
+    f_file = normalize_path(finding.get("file", ""))
+    gt_file = normalize_path(gt.get("file", ""))
 
-    if f_file != gt_file:
+    if not f_file or f_file != gt_file:
         return False
 
-    f_line = finding["line"]
-    if f_line == 0:
+    try:
+        f_line = int(finding.get("line") or 0)
+    except (ValueError, TypeError):
+        f_line = 0
+
+    if f_line <= 0:
         # Some tools report whole file without specific line
         return True
 

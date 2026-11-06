@@ -65,7 +65,7 @@ jobs:
         uses: microsoft/DevSkim-Action@v1
         continue-on-error: true
         with:
-          directory-to-analyze: 'app'
+          directory-to-scan: 'app'
           output-filename: 'sast-results/devskim.sarif'
 
       # ----------------------------------------------------
@@ -137,6 +137,7 @@ jobs:
       # Upload Results & Artifacts
       # ----------------------------------------------------
       - name: Upload SAST Reports & CSV Summary
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sast-evaluation-results
