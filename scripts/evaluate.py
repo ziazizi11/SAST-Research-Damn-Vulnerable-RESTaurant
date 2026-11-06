@@ -312,9 +312,12 @@ def main():
                 "TP": tp,
                 "FP": fp,
                 "FN": fn,
-                "Precision": prec,
-                "Recall": rec,
-                "F1_Score": f1
+                "Precision (%)": f"{prec * 100:.2f}%",
+                "Recall (%)": f"{rec * 100:.2f}%",
+                "F1_Score (%)": f"{f1 * 100:.2f}%",
+                "_prec_num": prec,
+                "_rec_num": rec,
+                "_f1_num": f1
             })
             scenario_counter += 1
 
@@ -329,11 +332,11 @@ def main():
             "TP",
             "FP",
             "FN",
-            "Precision",
-            "Recall",
-            "F1_Score"
+            "Precision (%)",
+            "Recall (%)",
+            "F1_Score (%)"
         ]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(records)
 
@@ -341,24 +344,24 @@ def main():
     print(f"[+] Full results exported to: {OUTPUT_CSV}")
 
     # 4. Display Single Tool Performance
-    print("\n" + "=" * 70)
+    print("\n" + "=" * 75)
     print("RESULTS: SINGLE TOOLS EVALUATION (k=1)")
-    print("=" * 70)
-    print(f"{'Tool':<12} | {'TP':<4} | {'FP':<4} | {'FN':<4} | {'Precision':<10} | {'Recall':<8} | {'F1-Score':<8}")
-    print("-" * 70)
+    print("=" * 75)
+    print(f"{'Tool':<12} | {'TP':<4} | {'FP':<4} | {'FN':<4} | {'Precision':<11} | {'Recall':<10} | {'F1-Score':<10}")
+    print("-" * 75)
     for r in records[:8]:
-        print(f"{r['tool_combination']:<12} | {r['TP']:<4} | {r['FP']:<4} | {r['FN']:<4} | {r['Precision']:<10.4f} | {r['Recall']:<8.4f} | {r['F1_Score']:<8.4f}")
+        print(f"{r['tool_combination']:<12} | {r['TP']:<4} | {r['FP']:<4} | {r['FN']:<4} | {r['Precision (%)']:<11} | {r['Recall (%)']:<10} | {r['F1_Score (%)']:<10}")
 
     # 5. Display Top 5 Highest F1-Score Combinations
-    records_sorted = sorted(records, key=lambda x: (x["F1_Score"], x["Recall"], -x["FP"]), reverse=True)
-    print("\n" + "=" * 70)
+    records_sorted = sorted(records, key=lambda x: (x["_f1_num"], x["_rec_num"], -x["FP"]), reverse=True)
+    print("\n" + "=" * 75)
     print("RESULTS: TOP 5 HIGHEST F1-SCORE COMBINATIONS")
-    print("=" * 70)
-    print(f"{'Rank':<5} | {'k':<3} | {'Combination':<35} | {'Prec':<6} | {'Rec':<6} | {'F1':<6}")
-    print("-" * 70)
+    print("=" * 75)
+    print(f"{'Rank':<5} | {'k':<3} | {'Combination':<35} | {'Prec':<8} | {'Rec':<8} | {'F1':<8}")
+    print("-" * 75)
     for rank, r in enumerate(records_sorted[:5], 1):
-        print(f"#{rank:<4} | {r['k_tools']:<3} | {r['tool_combination'][:35]:<35} | {r['Precision']:<6.4f} | {r['Recall']:<6.4f} | {r['F1_Score']:<6.4f}")
-    print("=" * 70)
+        print(f"#{rank:<4} | {r['k_tools']:<3} | {r['tool_combination'][:35]:<35} | {r['Precision (%)']:<8} | {r['Recall (%)']:<8} | {r['F1_Score (%)']:<8}")
+    print("=" * 75)
 
 
 if __name__ == "__main__":
